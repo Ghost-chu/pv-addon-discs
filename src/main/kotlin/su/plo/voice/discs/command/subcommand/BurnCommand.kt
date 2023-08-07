@@ -9,7 +9,6 @@ import net.kyori.adventure.text.format.NamedTextColor
 import net.kyori.adventure.text.format.TextDecoration
 import org.bukkit.command.CommandSender
 import org.bukkit.enchantments.Enchantment
-import org.bukkit.inventory.ItemFactory
 import org.bukkit.inventory.ItemFlag
 import org.bukkit.inventory.ItemStack
 import org.bukkit.persistence.PersistentDataType
@@ -19,10 +18,8 @@ import su.plo.voice.discs.command.CommandHandler
 import su.plo.voice.discs.command.SubCommand
 import su.plo.voice.discs.utils.extend.asPlayer
 import su.plo.voice.discs.utils.extend.asVoicePlayer
-import su.plo.voice.discs.utils.extend.friendlyMessage
 import su.plo.voice.discs.utils.extend.sendTranslatable
 import su.plo.voice.discs.utils.suspendSync
-import java.util.concurrent.ExecutionException
 
 class BurnCommand(handler: CommandHandler) : SubCommand(handler) {
 
@@ -41,7 +38,7 @@ class BurnCommand(handler: CommandHandler) : SubCommand(handler) {
 
         if (!voicePlayer.instance.hasPermission("pv.addon.discs.burn")) return listOf()
 
-        if (arguments.size < 2 ) return listOf()
+        if (arguments.size < 2) return listOf()
         if (arguments.size == 2) return listOf(
             handler.getTranslationStringByKey("pv.addon.discs.arg.url", voicePlayer.instance)
         )
@@ -60,9 +57,9 @@ class BurnCommand(handler: CommandHandler) : SubCommand(handler) {
         if (
             handler.plugin.addonConfig.burnableTag.requireBurnableTag &&
             (
-                !item.itemMeta.persistentDataContainer.has(handler.plugin.burnableKey) &&
-                !voicePlayer.instance.hasPermission("pv.addon.discs.burn.burnable_check_bypass")
-            )
+                    !item.itemMeta.persistentDataContainer.has(handler.plugin.burnableKey) &&
+                            !voicePlayer.instance.hasPermission("pv.addon.discs.burn.burnable_check_bypass")
+                    )
         ) {
             voicePlayer.instance.sendTranslatable("pv.addon.discs.error.not_burnable")
             return false
@@ -71,73 +68,75 @@ class BurnCommand(handler: CommandHandler) : SubCommand(handler) {
         return true
     }
 
-    override fun execute(sender: CommandSender, arguments: Array<out String>) { scope.launch {
+    override fun execute(sender: CommandSender, arguments: Array<out String>) {
+        scope.launch {
 
-        val voicePlayer = sender.asPlayer()?.asVoicePlayer(handler.plugin.voiceServer) ?: return@launch
+            val voicePlayer = sender.asPlayer()?.asVoicePlayer(handler.plugin.voiceServer) ?: return@launch
 
-        if (!voicePlayer.instance.hasPermission("pv.addon.discs.burn")) {
-            voicePlayer.instance.sendTranslatable("pv.addon.discs.error.no_permission")
-            return@launch
+            if (!voicePlayer.instance.hasPermission("pv.addon.discs.burn")) {
+                voicePlayer.instance.sendTranslatable("pv.addon.discs.error.no_permission")
+                return@launch
+            }
+
+            val identifier = arguments.getOrNull(1) ?: run {
+                voicePlayer.instance.sendTranslatable("pv.addon.discs.usage.burn")
+                return@launch
+            }
+
+            val track = try {
+                handler.plugin.audioPlayerManager.getTrack(identifier).await()
+            } catch (e: Exception) {
+                voicePlayer.instance.sendTranslatable("pv.addon.discs.error.get_track_fail", e.message)
+                return@launch
+            }
+
+            val name = arguments.drop(2)
+                .joinToString(" ")
+                .ifEmpty { track.info.title }
+
+            val player = sender.asPlayer() ?: run {
+                voicePlayer.instance.sendTranslatable("pv.error.player_only_command")
+                return@launch
+            }
+
+            val item = suspendSync(handler.plugin) { player.inventory.itemInMainHand }
+
+            if (!checkBurnable(voicePlayer, item)) return@launch
+
+            if (handler.plugin.addonConfig.addGlintToCustomDiscs) {
+                handler.plugin.forbidGrindstone(item)
+            }
+
+            val meta = handler.plugin.server.itemFactory.getItemMeta(item.type)
+
+            meta.addItemFlags(*ItemFlag.values())
+
+            meta.persistentDataContainer.set(
+                handler.plugin.identifierKey,
+                PersistentDataType.STRING,
+                identifier
+            )
+
+            if (handler.plugin.addonConfig.addGlintToCustomDiscs) {
+                meta.addEnchant(Enchantment.MENDING, 1, false)
+            }
+
+            val loreName = Component.text()
+                .content(name)
+                .decoration(TextDecoration.ITALIC, false)
+                .color(NamedTextColor.GRAY)
+                .build()
+
+            meta.lore(listOf(loreName))
+
+            suspendSync(handler.plugin) {
+                val item = player.inventory.itemInMainHand
+                if (!checkBurnable(voicePlayer, item)) return@suspendSync
+                item.itemMeta = meta
+                voicePlayer.instance.sendTranslatable("pv.addon.discs.success.burn", name)
+            }
         }
-
-        val identifier = arguments.getOrNull(1) ?: run {
-            voicePlayer.instance.sendTranslatable("pv.addon.discs.usage.burn")
-            return@launch
-        }
-
-        val track = try {
-            handler.plugin.audioPlayerManager.getTrack(identifier).await()
-        } catch (e: ExecutionException) {
-            voicePlayer.instance.sendTranslatable("pv.addon.discs.error.get_track_fail", e.friendlyMessage)
-            return@launch
-        }
-
-        val name = arguments.drop(2)
-            .joinToString(" ")
-            .ifEmpty { track.info.title }
-
-        val player = sender.asPlayer() ?: run {
-            voicePlayer.instance.sendTranslatable("pv.error.player_only_command")
-            return@launch
-        }
-
-        val item = suspendSync(handler.plugin) { player.inventory.itemInMainHand }
-
-        if (!checkBurnable(voicePlayer, item)) return@launch
-
-        if (handler.plugin.addonConfig.addGlintToCustomDiscs) {
-            handler.plugin.forbidGrindstone(item)
-        }
-
-        val meta = handler.plugin.server.itemFactory.getItemMeta(item.type)
-
-        meta.addItemFlags(*ItemFlag.values())
-
-        meta.persistentDataContainer.set(
-            handler.plugin.identifierKey,
-            PersistentDataType.STRING,
-            identifier
-        )
-
-        if (handler.plugin.addonConfig.addGlintToCustomDiscs) {
-            meta.addEnchant(Enchantment.MENDING, 1, false)
-        }
-
-        val loreName = Component.text()
-            .content(name)
-            .decoration(TextDecoration.ITALIC, false)
-            .color(NamedTextColor.GRAY)
-            .build()
-
-        meta.lore(listOf(loreName))
-
-        suspendSync(handler.plugin) {
-            val item = player.inventory.itemInMainHand
-            if (!checkBurnable(voicePlayer, item)) return@suspendSync
-            item.itemMeta = meta
-            voicePlayer.instance.sendTranslatable("pv.addon.discs.success.burn", name)
-        }
-    }}
+    }
 
     override fun checkCanExecute(sender: CommandSender): Boolean = sender.hasPermission("pv.addon.discs.burn")
 }

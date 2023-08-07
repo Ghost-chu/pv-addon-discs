@@ -1,21 +1,14 @@
 package su.plo.voice.discs
 
+import com.sedmelluq.discord.lavaplayer.player.AudioLoadResultHandler
+import com.sedmelluq.discord.lavaplayer.player.AudioPlayerManager
+import com.sedmelluq.discord.lavaplayer.player.DefaultAudioPlayerManager
+import com.sedmelluq.discord.lavaplayer.source.http.HttpAudioSourceManager
+import com.sedmelluq.discord.lavaplayer.tools.FriendlyException
+import com.sedmelluq.discord.lavaplayer.track.*
 import kotlinx.coroutines.*
 import su.plo.voice.api.encryption.Encryption
 import su.plo.voice.api.server.audio.source.ServerStaticSource
-import su.plo.voice.lavaplayer.libs.com.sedmelluq.discord.lavaplayer.player.AudioLoadResultHandler
-import su.plo.voice.lavaplayer.libs.com.sedmelluq.discord.lavaplayer.player.AudioPlayerManager
-import su.plo.voice.lavaplayer.libs.com.sedmelluq.discord.lavaplayer.player.DefaultAudioPlayerManager
-import su.plo.voice.lavaplayer.libs.com.sedmelluq.discord.lavaplayer.source.bandcamp.BandcampAudioSourceManager
-import su.plo.voice.lavaplayer.libs.com.sedmelluq.discord.lavaplayer.source.beam.BeamAudioSourceManager
-import su.plo.voice.lavaplayer.libs.com.sedmelluq.discord.lavaplayer.source.getyarn.GetyarnAudioSourceManager
-import su.plo.voice.lavaplayer.libs.com.sedmelluq.discord.lavaplayer.source.http.HttpAudioSourceManager
-import su.plo.voice.lavaplayer.libs.com.sedmelluq.discord.lavaplayer.source.soundcloud.SoundCloudAudioSourceManager
-import su.plo.voice.lavaplayer.libs.com.sedmelluq.discord.lavaplayer.source.twitch.TwitchStreamAudioSourceManager
-import su.plo.voice.lavaplayer.libs.com.sedmelluq.discord.lavaplayer.source.vimeo.VimeoAudioSourceManager
-import su.plo.voice.lavaplayer.libs.com.sedmelluq.discord.lavaplayer.source.youtube.YoutubeAudioSourceManager
-import su.plo.voice.lavaplayer.libs.com.sedmelluq.discord.lavaplayer.tools.FriendlyException
-import su.plo.voice.lavaplayer.libs.com.sedmelluq.discord.lavaplayer.track.*
 import su.plo.voice.proto.packets.tcp.clientbound.SourceAudioEndPacket
 import su.plo.voice.proto.packets.udp.clientbound.SourceAudioPacket
 import java.net.URI
@@ -87,13 +80,15 @@ class PlasmoAudioPlayerManager(
     fun getTrack(identifier: String): CompletableFuture<AudioTrack> {
 
         val future = CompletableFuture<AudioTrack>()
-
         lavaPlayerManager.loadItem(identifier, object: AudioLoadResultHandler {
             override fun trackLoaded(track: AudioTrack) {
                 future.complete(track)
             }
             override fun playlistLoaded(playlist: AudioPlaylist) {
-                future.completeExceptionally(noMatchesException)
+                if(playlist.tracks.isNotEmpty())
+                    future.complete(playlist.tracks[0])
+                else
+                    future.completeExceptionally(noMatchesException)
             }
             override fun loadFailed(exception: FriendlyException) {
                 future.completeExceptionally(exception)
@@ -102,7 +97,7 @@ class PlasmoAudioPlayerManager(
                 future.completeExceptionally(noMatchesException)
             }
         })
-        return future
+        return future.orTimeout(10,TimeUnit.SECONDS)
     }
 
     fun getPlaylist(identifier: String): CompletableFuture<AudioPlaylist> {
@@ -111,15 +106,18 @@ class PlasmoAudioPlayerManager(
 
         lavaPlayerManager.loadItem(identifier, object : AudioLoadResultHandler {
             override fun trackLoaded(track: AudioTrack) {
+                plugin.logger.warning("Track loaded no matches")
                 future.completeExceptionally(noMatchesException)
             }
             override fun playlistLoaded(playlist: AudioPlaylist) {
                 future.complete(playlist)
             }
             override fun loadFailed(exception: FriendlyException) {
+                plugin.logger.warning("load failed")
                 future.completeExceptionally(exception)
             }
             override fun noMatches() {
+                plugin.logger.warning("no matches")
                 future.completeExceptionally(noMatchesException)
             }
         })
@@ -128,18 +126,16 @@ class PlasmoAudioPlayerManager(
     }
 
     private fun registerSources() {
-        lavaPlayerManager.registerSourceManager(YoutubeAudioSourceManager(
-            true,
-            plugin.addonConfig.youtube.email.ifBlank { null },
-            plugin.addonConfig.youtube.password.ifBlank { null }
-        ))
-        lavaPlayerManager.registerSourceManager(SoundCloudAudioSourceManager.createDefault())
-        lavaPlayerManager.registerSourceManager(BandcampAudioSourceManager())
-        lavaPlayerManager.registerSourceManager(VimeoAudioSourceManager())
-        lavaPlayerManager.registerSourceManager(TwitchStreamAudioSourceManager())
-        lavaPlayerManager.registerSourceManager(BeamAudioSourceManager())
-        lavaPlayerManager.registerSourceManager(GetyarnAudioSourceManager())
-        lavaPlayerManager.registerSourceManager(CustomHttpAudioSourceManager(plugin))
+//        lavaPlayerManager.registerSourceManager(YoutubeAudioSourceManager(
+//            true,
+//            plugin.addonConfig.youtube.email.ifBlank { null },
+//            plugin.addonConfig.youtube.password.ifBlank { null }
+//        ))
+        try {
+            lavaPlayerManager.registerSourceManager(CustomHttpAudioSourceManager(plugin))
+        }catch (e: Throwable) {
+            plugin.logger.warning("CustomHttpAudioSourceManager not registered")
+        }
     }
 
     class CustomHttpAudioSourceManager(private val plugin: DiscsPlugin) : HttpAudioSourceManager() {
